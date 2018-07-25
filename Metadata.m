@@ -143,8 +143,9 @@ classdef Metadata < handle
             s.MD.Types = types(1:end-1);
             s.MD.ImgFiles = values(:, end)';
             new_md = s.MD;
-            %new_md.convert_type_datatype('XYbeforeTransform', @num2str);
-            %new_md.convert_type_datatype('XY', @num2str);
+%            NO NO! MD made by scope MUST match MD made by reload!
+%            new_md.convert_type_datatype('XYbeforeTransform', @num2str);
+%            new_md.convert_type_datatype('XY', @num2str);
         end
         
         function MD = convert_type_datatype(MD, type, type_func)
@@ -345,11 +346,15 @@ classdef Metadata < handle
             %% get image size and init the stack
             try
                 filename = MD.getImageFilename({'index'},{indx(1)});
+                warning('off')
                 info = imfinfo(filename);
+                warning('on')
             catch  %#ok<CTCH>
                 try
                     filename = MD.getImageFilename({'index'},{indx(2)});
+                    warning('off')
                     info = imfinfo(filename);
+                    warning('on')
                 catch %#ok<CTCH>
                     if MD.dieOnReadError
                         error('Files not found to read stack')
@@ -360,10 +365,8 @@ classdef Metadata < handle
                     end
                 end
             end
-            blnk = zeros([info.Height info.Width]);
-            blnk = imresize(blnk,resize);
-            siz = [size(blnk) numel(indx)];
-            stk = zeros(siz,'single');
+
+            stk = cell(numel(indx),1);
             
             %% read the images needed for flat field correction
             if flatfieldcorrection
@@ -397,43 +400,61 @@ classdef Metadata < handle
                     end
                     
                     %img = imread(filename);
-                    tf = Tiff(filename{i},'r');
-                    img = tf.read();
-                    img=single(img)/2^16;
+                    %tf = Tiff(filename{i},'r');
+                    %img = tf.read();
+                    %img=single(img)/2^16;
+                    warning('off')
+                    info = imfinfo(filename{i});
+                    warning('on')
+                    num_images = numel(info);
                     
-                    if flatfieldcorrection
+                    
+                    blnk = zeros([info(1).Height info(1).Width]);
+                    blnk = imresize(blnk,resize);
+                    siz = [size(blnk),num_images];
+                    img = zeros(siz,'single');
+                    
+                    for k = 1:num_images
+                        img1 = imread(filename{i}, k, 'Info', info);
                         
-                        try
-                            flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
-                            img = doFlatFieldCorrection(MD,img,flt);
-                        catch
-                            MD.dieOnReadError = 1;
-                            error('Could not find flatfield files, to continue without it add flatfieldcorrection, false to stkread call');
-                            
+                        if flatfieldcorrection
+                            try
+                                flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
+                                img1 = doFlatFieldCorrection(MD,img1,flt);
+                            catch
+                                MD.dieOnReadError = 1;
+                                error('Could not find flatfield files, to continue without it add flatfieldcorrection, false to stkread call');
+                            end
                         end
                         
-                    end
-                    
-                    if registerflag
-                        %%
-                        fprintf('Registering... ')
-                        
-                        TformT = MD.getSpecificMetadataByIndex('driftTform',indx(i));
-                        TformT = TformT{1};
-                        if size(TformT,2)==9
-                            Tform = affine2d(reshape(TformT,3,3)');
-                            img = imwarp(img,Tform,'OutputView',imref2d(size(img)));
-                        else
-                            fprintf('No drift correction transform found.')
+                        if registerflag
+                            fprintf('Registering... ')
+                            TformT = MD.getSpecificMetadataByIndex('driftTform',indx(i));
+                            TformT = TformT{1};
+                            if size(TformT,2)==9
+                                Tform = affine2d(reshape(TformT,3,3)');
+                                img1 = imwarp(img1,Tform,'OutputView',imref2d(size(img1)));
+                            else
+                                fprintf('No drift correction transform found.')
+                            end
+                            fprintf('...done\n')
                         end
-                        fprintf('...done\n')
+                        
+                        
+                        if resize~=1
+                            img1 = imresize(img1,resize);
+                        end
+                        
+                        
+                        img1 = func(img1);
+                        
+                        img(:,:,k) = img1; %add to singlefilestack
+                        
                     end
-                    
-                    if resize~=1
-                        img = imresize(img,resize);
-                    end
-                    img = func(img);
-                    stk(:,:,i) = img;
+
+                    stk{i}=img;    
+                    %stk = cat(3,stk,img);
+                    %stk = permute(cell2mat(stk),[2 3 1]);
                 catch e
                     if MD.dieOnReadError
                         error('Couldn''t read image %s, error message was: %s',filename{i},e.message);  %#ok<WNTAG>
@@ -442,7 +463,7 @@ classdef Metadata < handle
                     end
                 end
             end
-            
+            stk = cat(3,stk{:});
             pos = MD.getSpecificMetadataByIndex('Position',indx);
             grp = MD.getSpecificMetadataByIndex('group',indx);
             if montage && ~isequal(pos,grp)
@@ -471,9 +492,12 @@ classdef Metadata < handle
             % the flt that is passed in uint16, convert...
             flt = double(flt)-arg.cameraoffset/2^16;
             flt = flt./nanmean(flt(:));
-            
-            img = double(img-arg.cameraoffset)./flt+arg.cameraoffset;
-            img(flt<0.05) = prctile(img(unidrnd(numel(img),10000,1)),1); % to save time, look at random 10K pixels and not all of them...
+            for i=1:size(img,3)
+                img1 = img(:,:,i);
+                img1 = double(img1-arg.cameraoffset)./flt+arg.cameraoffset;
+                img1(flt<0.05) = prctile(img1(unidrnd(numel(img1),10000,1)),1); % to save time, look at random 10K pixels and not all of them...
+                img(:,:,i) = img1;
+            end
             % deal with artifacts
             img(img<0)=0;
             img(img>1)=1;
@@ -919,7 +943,8 @@ classdef Metadata < handle
             MD.Values=V;
             %MD.exportMetadata(pth);
         end
-        
+
+
         function saveMetadataMat(MD,pth)
             % saves the Metadata object to path pth
             if iscell(MD.pth) && numel(MD.pth)>1
@@ -1197,6 +1222,30 @@ classdef Metadata < handle
                 V2=cat(1,V2{:});
             end
             [table,~,~,labels]=crosstab(V1,V2);
+        end
+        
+
+        function makeTileConfig(MD)
+            configFileName = fullfile(MD.pth,'TileConfiguration.txt');
+            fid = fopen( configFileName, 'wt' );
+            fprintf( fid, '%s\n', '# Define the number of dimensions we are working on');
+            fprintf( fid, '%s\n', 'dim = 3');
+            fprintf( fid, '%s\n', '# Define the image coordinates (in pixels)');
+            
+            Tiles = MD.unique('Tile');
+            Channels = MD.unique('Channel');
+            frames = MD.unique('frame');
+            for indFrame = 1:numel(frames)
+                for indCh=1:numel(Channels)
+                    XYZ = [cell2mat(MD.getSpecificMetadata('XY','frame',frames(1),'Channel',Channels{indCh})), cell2mat(MD.getSpecificMetadata('Z','frame',frames(1),'Channel',Channels{indCh}))]./unique(cell2mat(MD.getSpecificMetadata('PixelSize')));
+                    for indTile=1:numel(Tiles)
+                        stkStr = [num2str((indCh-1)*numel(Tiles)+indTile-1) '; ' num2str(indFrame-1) '; (' num2str(XYZ(indTile,1)) ', ' num2str(XYZ(indTile,2)) ', ' num2str(XYZ(indTile,3)) ')' ];
+                        fprintf( fid, '%s\n', stkStr);
+                    end
+                end
+            end
+            
+            fclose(fid);
         end
         
     end
