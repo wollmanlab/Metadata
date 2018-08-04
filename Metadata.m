@@ -416,7 +416,7 @@ classdef Metadata < handle
                     
                     for k = 1:num_images
                         img1 = imread(filename{i}, k, 'Info', info);
-                        
+                        img1=single(img1)/2^16;
                         if flatfieldcorrection
                             try
                                 flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
