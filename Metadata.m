@@ -1193,7 +1193,14 @@ classdef Metadata < handle
             end
             
         end
-        
+        function possibleShiftingFrames = findAcqIndexes(MD, position, channel, varargin)
+            arg.timefunc = @(t) true(size(t));
+            arg = parseVarargin(varargin, arg);
+            
+            tbl=MD.tabulate('acq','Position',position,'Channel',channel,'timefunc',arg.timefunc);
+            tbl=cat(1,tbl{:,2});
+            possibleShiftingFrames=cumsum(tbl(1:end-1))+1;
+        end
         
         % performs a crosstab operation to create a 2D table of counts for
         % type propertoies
