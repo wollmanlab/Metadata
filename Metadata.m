@@ -125,7 +125,7 @@ classdef Metadata < handle
         function new_md = readDSV(~, pth)
             delimiter = '\t';
             s = load(fullfile(pth, 'Metadata.mat'));
-            M = readtable(fullfile(pth, 'Metadata.txt'),'delimiter',delimiter); 
+            M = readtable(fullfile(pth, 'Metadata.txt'),'delimiter',delimiter);
             
             if any(strcmp('XY',M.Properties.VariableNames))
                 M.XY = cellfun(@str2num,M.XY,'UniformOutput', false);%Parse XY values
@@ -143,9 +143,9 @@ classdef Metadata < handle
             s.MD.Types = types(1:end-1);
             s.MD.ImgFiles = values(:, end)';
             new_md = s.MD;
-%            NO NO! MD made by scope MUST match MD made by reload!
-%            new_md.convert_type_datatype('XYbeforeTransform', @num2str);
-%            new_md.convert_type_datatype('XY', @num2str);
+            %            NO NO! MD made by scope MUST match MD made by reload!
+            %            new_md.convert_type_datatype('XYbeforeTransform', @num2str);
+            %            new_md.convert_type_datatype('XY', @num2str);
         end
         
         function MD = convert_type_datatype(MD, type, type_func)
@@ -327,9 +327,19 @@ classdef Metadata < handle
             V(ismember(T,'register'))=[];
             T(ismember(T,'register'))=[];
             
+            
+            awtflag = V(ismember(T,'blindflatfield'));
+            if isempty(awtflag)
+                awtflag=0;
+            else
+                awtflag=awtflag{1};
+            end
+            V(ismember(T,'blindflatfield'))=[];
+            T(ismember(T,'blindflatfield'))=[];
+            
             flatfieldcorrection= V(ismember(T,'flatfieldcorrection'));
             if isempty(flatfieldcorrection)
-                flatfieldcorrection=true; % correct by default in stkread!
+                flatfieldcorrection=false; % Don't correct by default in stkread! (!) AOY
             else
                 flatfieldcorrection=flatfieldcorrection{1};
             end
@@ -365,8 +375,16 @@ classdef Metadata < handle
                     end
                 end
             end
-
+            
             stk = cell(numel(indx),1);
+            
+            % deal with blind ff
+            if awtflag
+                fltfieldnames = MD.getSpecificMetadataByIndex('Channel',indx);
+                unqFltFieldNames = unique(fltfieldnames);
+                FlatFields = zeros([[info.Height info.Width] numel(unqFltFieldNames)],'single');
+                handledflatfields = {};
+            end
             
             %% read the images needed for flat field correction
             if flatfieldcorrection
@@ -417,6 +435,9 @@ classdef Metadata < handle
                     for k = 1:num_images
                         img1 = imread(filename{i}, k, 'Info', info);
                         img1=single(img1)/2^16;
+                        
+                        
+                        
                         if flatfieldcorrection
                             try
                                 flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
@@ -426,6 +447,25 @@ classdef Metadata < handle
                                 error('Could not find flatfield files, to continue without it add flatfieldcorrection, false to stkread call');
                             end
                         end
+                        
+                        
+                        if awtflag %blind flat field correction
+                            if ~ismember(fltfieldnames{i},handledflatfields)
+                                ind1=ismember(unqFltFieldNames,fltfieldnames{i});
+                                handledflatfields{ind1} = fltfieldnames{i};
+                                
+                                disp(['Calculating flat field for channel ' fltfieldnames{i}])
+                                
+                                img2awt = mean(img1,3);
+                                awtImage = awt2Dlite(img2awt,8);
+                                FlatFields(:,:,ind1)=squeeze(awtImage(:,:,:,end));
+                            end
+                            flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
+                            img1 = max(flt(:))+(img1-repmat(flt,1,1,size(img1,3)));
+                        end
+                        
+                        
+                        
                         
                         if registerflag
                             fprintf('Registering... ')
@@ -451,8 +491,8 @@ classdef Metadata < handle
                         img(:,:,k) = img1; %add to singlefilestack
                         
                     end
-
-                    stk{i}=img;    
+                    
+                    stk{i}=img;
                     %stk = cat(3,stk,img);
                     %stk = permute(cell2mat(stk),[2 3 1]);
                 catch e
@@ -943,8 +983,8 @@ classdef Metadata < handle
             MD.Values=V;
             %MD.exportMetadata(pth);
         end
-
-
+        
+        
         function saveMetadataMat(MD,pth)
             % saves the Metadata object to path pth
             if iscell(MD.pth) && numel(MD.pth)>1
@@ -1231,7 +1271,7 @@ classdef Metadata < handle
             [table,~,~,labels]=crosstab(V1,V2);
         end
         
-
+        
         function makeTileConfig(MD)
             configFileName = fullfile(MD.pth,'TileConfiguration.txt');
             fid = fopen( configFileName, 'wt' );
