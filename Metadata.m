@@ -326,6 +326,16 @@ classdef Metadata < handle
             V(ismember(T,'register'))=[];
             T(ismember(T,'register'))=[];
             
+            awtflag = V(ismember(T,'blindflatfield'));
+            if isempty(awtflag)
+                awtflag=0;
+            else
+                awtflag=awtflag{1};
+            end
+            V(ismember(T,'blindflatfield'))=[];
+            T(ismember(T,'blindflatfield'))=[];
+            
+            
             flatfieldcorrection= V(ismember(T,'flatfieldcorrection'));
             if isempty(flatfieldcorrection)
                 flatfieldcorrection=true; % correct by default in stkread!
@@ -341,6 +351,8 @@ classdef Metadata < handle
                 stk=[];
                 return
             end
+            
+
             
             %% get image size and init the stack
             try
@@ -365,6 +377,18 @@ classdef Metadata < handle
             siz = [size(blnk) numel(indx)];
             stk = zeros(siz,'single');
             
+            
+  
+            
+            
+            % deal with blind ff
+            if awtflag
+                fltfieldnames = MD.getSpecificMetadataByIndex('Channel',indx);
+                unqFltFieldNames = unique(fltfieldnames);
+                FlatFields = zeros([[info.Height info.Width] numel(unqFltFieldNames)],'single');
+                handledflatfields = {};
+            end
+            
             %% read the images needed for flat field correction
             if flatfieldcorrection
                 fltfieldnames = MD.getSpecificMetadataByIndex('FlatField',indx);
@@ -381,6 +405,12 @@ classdef Metadata < handle
                     end
                 end
             end
+            
+            
+
+            
+            
+            
             %% read the stack
             n=0;
             filename=cell(numel(indx),1);
@@ -414,6 +444,23 @@ classdef Metadata < handle
                         
                     end
                     
+                    if awtflag %need to fix to allow multiple channels to be loaded together smoothly
+                        if ~ismember(fltfieldnames{i},handledflatfields)
+                            ind1=ismember(unqFltFieldNames,fltfieldnames{i});
+                            handledflatfields{ind1} = fltfieldnames{i};
+
+                            disp(['Calculating flat field for channel ' fltfieldnames{i}])
+                            
+                            img2awt = mean(img,3);
+                            awtImage = awt2Dlite(img2awt,8);
+                            FlatFields(:,:,ind1)=squeeze(awtImage(:,:,:,end));                           
+                        end
+                        flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
+                        img = max(flt(:))+(img-repmat(flt,1,1,size(img,3)));
+                    end
+                    
+
+                    
                     if registerflag
                         %%
                         fprintf('Registering... ')
@@ -441,7 +488,10 @@ classdef Metadata < handle
                         warning('Couldn''t read image %s, error message was: %s',filename{i},e.message);  %#ok<WNTAG>
                     end
                 end
+                
+
             end
+
             
             pos = MD.getSpecificMetadataByIndex('Position',indx);
             grp = MD.getSpecificMetadataByIndex('group',indx);
