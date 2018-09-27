@@ -457,11 +457,13 @@ classdef Metadata < handle
                                 disp(['Calculating flat field for channel ' fltfieldnames{i}])
                                 
                                 img2awt = mean(img1,3);
-                                awtImage = awt2Dlite(img2awt,8);
+                                awtImage = awt2Dlite(img2awt,7);
                                 FlatFields(:,:,ind1)=squeeze(awtImage(:,:,:,end));
                             end
                             flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
-                            img1 = max(flt(:))+(img1-repmat(flt,1,1,size(img1,3)));
+                            img1 = (img1-repmat(flt,1,1,size(img1,3)));
+                            img1 = img1.*(img1>0);
+                            img1 = max(flt(:))+img1;
                         end
                         
                         
