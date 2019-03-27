@@ -778,6 +778,22 @@ classdef Metadata < handle
             filename = regexprep(filename,'data4','bigstore');
         end
         
+        
+        
+        function [filename,indx] = getImageFilenameRelative(M,Types,Values)
+            if strcmp(Types{1},'index')
+                indx = Values{1};
+            else
+                indx = M.getIndex(Types,Values);
+            end
+            
+            if numel(indx) ~=1
+                error('criteria should be such that only one image is returned - please recheck criteria');
+            end
+            filename = M.ImgFiles{indx};
+            filename = regexprep(filename,'\\',filesep);
+        end
+        
         % read an image using criteria, use the more allaborate stkread
         % for fancy options.
         function [img,indx] = imread(M,varargin)
