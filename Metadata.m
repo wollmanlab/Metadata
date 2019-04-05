@@ -786,6 +786,7 @@ classdef Metadata < handle
             filename = regexprep(filename,'data4','bigstore');
         end
         
+
         function [filename,indx] = getImageFilenameRelative(M,Types,Values)
             if strcmp(Types{1},'index')
                 indx = Values{1};
