@@ -72,7 +72,7 @@ classdef Metadata < handle
     end
     
     methods
-        function MD = Metadata(pth,acqname)%constructor
+        function MD = Metadata(pth,acqname,matflag)%constructor
             if nargin==0
                 return
             end
@@ -82,9 +82,8 @@ classdef Metadata < handle
             
             % if a Metadata.mat file exist just load it
             if exist(fullfile(pth,'Metadata.mat'),'file')
-                if exist(fullfile(pth,'Metadata.txt'),'file')
+                if exist(fullfile(pth,'Metadata.txt'),'file') && nargin<3
                     s.MD=MD.readDSV(pth);
-                    
                 else
                     s=load(fullfile(pth,'Metadata.mat'));
                     MD = s.MD;
@@ -395,7 +394,11 @@ classdef Metadata < handle
                 FlatFields = zeros([[info.Height info.Width] numel(unqFltFieldNames)],'uint16');
                 for i=1:numel(unqFltFieldNames)
                     try
-                        FlatFields(:,:,i)=imread(fullfile(MD.pth,['flt_' unqFltFieldNames{i} '.tif']));
+                        warning('off')
+                        info1 = imfinfo(fullfile(MD.pth,['flt_' unqFltFieldNames{i} '.tif']));
+                        warning('on')
+
+                        FlatFields(:,:,i)=imread(fullfile(MD.pth,['flt_' unqFltFieldNames{i} '.tif']), 'Info', info1);
                     catch
                         [pth2,~]=fileparts(MD.pth);
                         FlatFields(:,:,i)=imread(fullfile(pth2,['flt_' unqFltFieldNames{i} '.tif']));
@@ -457,13 +460,16 @@ classdef Metadata < handle
                                 disp(['Calculating flat field for channel ' fltfieldnames{i}])
                                 
                                 img2awt = mean(img1,3);
-                                awtImage = awt2Dlite(img2awt,7);
+                                awtImage = awt2Dlite(img2awt,9);
                                 FlatFields(:,:,ind1)=squeeze(awtImage(:,:,:,end));
                             end
                             flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
+                            
+                            %img1 = max(flt(:)).*(img1./repmat(flt,1,1,size(img1,3)));
+
                             img1 = (img1-repmat(flt,1,1,size(img1,3)));
                             img1 = img1.*(img1>0);
-                            img1 = max(flt(:))+img1;
+                            %img1 = max(flt(:))+img1;
                         end
                         
                         
@@ -528,11 +534,13 @@ classdef Metadata < handle
         
         function  img = doFlatFieldCorrection(~,img,flt,varargin)
             % inputs
-            arg.cameraoffset = 100/2^16;
+            arg.cameraoffset = 8974/2^16;
             arg = parseVarargin(varargin,arg);
             
             % the flt that is passed in uint16, convert...
-            flt = double(flt)-arg.cameraoffset/2^16;
+            flt = double(flt)-3814/2^16;
+            
+            %flt = double(flt)-arg.cameraoffset/2^16;
             flt = flt./nanmean(flt(:));
             for i=1:size(img,3)
                 img1 = img(:,:,i);
@@ -776,6 +784,20 @@ classdef Metadata < handle
             
             filename = regexprep(filename,'data3','bigstore');
             filename = regexprep(filename,'data4','bigstore');
+        end
+        
+        function [filename,indx] = getImageFilenameRelative(M,Types,Values)
+            if strcmp(Types{1},'index')
+                indx = Values{1};
+            else
+                indx = M.getIndex(Types,Values);
+            end
+            
+            if numel(indx) ~=1
+                error('criteria should be such that only one image is returned - please recheck criteria');
+            end
+            filename = M.ImgFiles{indx};
+            filename = regexprep(filename,'\\',filesep);
         end
         
         % read an image using criteria, use the more allaborate stkread
