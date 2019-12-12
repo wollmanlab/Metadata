@@ -87,6 +87,10 @@ classdef Metadata < handle
                 else
                     s=load(fullfile(pth,'Metadata.mat'));
                     MD = s.MD;
+                    if isempty(MD.Values)
+                        warning('empty values, loading metadata from txt file')
+                        s.MD=MD.readDSV(pth);
+                    end
                 end
                 MD=s.MD;
                 MD.pth = pth;
@@ -298,6 +302,16 @@ classdef Metadata < handle
                 resize = resize{1};
             end
             
+            %% figure out if I need to resize
+            resize3D = V(ismember(T,'resize3D'));
+            V(ismember(T,'resize3D'))=[];
+            T(ismember(T,'resize3D'))=[];
+            if isempty(resize3D)
+                resize3D = 1;
+            else
+                resize3D = resize3D{1};
+            end
+            
             montage = V(ismember(T,'montage'));
             if isempty(montage)
                 montage = false;
@@ -397,7 +411,7 @@ classdef Metadata < handle
                         warning('off')
                         info1 = imfinfo(fullfile(MD.pth,['flt_' unqFltFieldNames{i} '.tif']));
                         warning('on')
-
+                        
                         FlatFields(:,:,i)=imread(fullfile(MD.pth,['flt_' unqFltFieldNames{i} '.tif']), 'Info', info1);
                     catch
                         [pth2,~]=fileparts(MD.pth);
@@ -407,11 +421,13 @@ classdef Metadata < handle
             end
             %% read the stack
             n=0;
-            filename=cell(numel(indx),1);
-            for i=1:numel(indx)
-                filename{i} = MD.getImageFilename({'index'},{indx(i)});
+            %            filename=cell(numel(indx),1);
+            filename = unique(arrayfun(@(x) MD.getImageFilename({'index'},{x}), indx,'UniformOutput', false),'stable');
+            
+            for i=1:numel(filename)
+                %filename{i} = MD.getImageFilename({'index'},{indx(i)});
                 MD.verbose && fprintf(repmat('\b',1,n));%#ok<VUNUS>
-                msg = sprintf('reading image %s, number %g out of %g\n',filename{i},i,numel(indx));
+                msg = sprintf('reading image %s, number %g out of %g \n',filename{i},i,numel(filename));
                 n=numel(msg);
                 msg = regexprep(msg,'\\','\\\\');
                 MD.verbose && fprintf(msg);%#ok<VUNUS>
@@ -431,7 +447,7 @@ classdef Metadata < handle
                     
                     
                     blnk = zeros([info(1).Height info(1).Width]);
-                    blnk = imresize(blnk,resize);
+                    %blnk = imresize(blnk,resize);
                     siz = [size(blnk),num_images];
                     img = zeros(siz,'single');
                     
@@ -466,38 +482,65 @@ classdef Metadata < handle
                             flt = FlatFields(:,:,ismember(unqFltFieldNames,fltfieldnames{i}));
                             
                             %img1 = max(flt(:)).*(img1./repmat(flt,1,1,size(img1,3)));
-
+                            
                             img1 = (img1-repmat(flt,1,1,size(img1,3)));
-                            img1 = img1.*(img1>0);
-                            %img1 = max(flt(:))+img1;
+                            %img1 = img1.*(img1>0);
+                            img1 = max(flt(:))+img1;
                         end
-                        
-                        
-                        
-                        
-                        if registerflag
-                            fprintf('Registering... ')
-                            TformT = MD.getSpecificMetadataByIndex('driftTform',indx(i));
-                            TformT = TformT{1};
-                            if size(TformT,2)==9
-                                Tform = affine2d(reshape(TformT,3,3)');
-                                img1 = imwarp(img1,Tform,'OutputView',imref2d(size(img1)));
-                            else
-                                fprintf('No drift correction transform found.')
-                            end
-                            fprintf('...done\n')
-                        end
-                        
-                        
-                        if resize~=1
-                            img1 = imresize(img1,resize);
-                        end
-                        
                         
                         img1 = func(img1);
                         
                         img(:,:,k) = img1; %add to singlefilestack
                         
+                    end
+                    
+                    if registerflag
+                        msg = 'Registering... ';
+                        fprintf(msg)
+                        n=n+numel(msg);
+                        TformT = MD.getSpecificMetadataByIndex('driftTform',indx(i));
+                        TformT = TformT{1};
+                        if size(TformT,2)==9
+                            Tform = affine2d(reshape(TformT,3,3)');
+                            img = imwarp(img,Tform,'OutputView',imref2d(size(img)));
+                            msg = '...done\n';
+                            fprintf(msg)
+                            n=n+numel(msg)-1;
+                        elseif size(TformT,2)==16
+                            Tform = affine3d(reshape(TformT,4,4)');
+                            img = imwarp(img,Tform,'OutputView',imref3d(size(img)));
+                            msg = '...done\n';
+                            fprintf(msg)
+                            n=n+numel(msg)-1;
+                        else
+                            msg = 'No drift correction transform found.';
+                            fprintf(msg)
+                            n=n+numel(msg);
+                        end
+
+
+                    end
+                    
+                    
+                    if resize~=1
+                        msg = 'Resizing... ';
+                        fprintf(msg)
+                        n=n+numel(msg);
+                        
+                        img = imresize(img,resize);
+                        msg = '...done\n';
+                        fprintf(msg)
+                        n=n+numel(msg)-1;
+                    end
+                    
+                    if resize3D~=1     
+                        msg = 'Resizing 3D... ';
+                        fprintf(msg)
+                        n=n+numel(msg);
+                        img = MD.imresize3D(img,resize3D);
+                        msg = '...done\n';
+                        fprintf(msg)
+                        n=n+numel(msg)-1;
                     end
                     
                     stk{i}=img;
@@ -530,6 +573,12 @@ classdef Metadata < handle
             end
             
             
+        end
+        
+        function DataRe = imresize3D(MD, Data, scale)
+            
+            size2scl = ceil(size(Data)*scale);
+            DataRe = permute(imresize(permute(imresize(Data,[size2scl(1), size2scl(2)]),[3 1 2]),[size2scl(3), size2scl(1)]),[2 3 1]);
         end
         
         function  img = doFlatFieldCorrection(~,img,flt,varargin)
@@ -786,7 +835,7 @@ classdef Metadata < handle
             filename = regexprep(filename,'data4','bigstore');
         end
         
-
+        
         function [filename,indx] = getImageFilenameRelative(M,Types,Values)
             if strcmp(Types{1},'index')
                 indx = Values{1};
@@ -1295,6 +1344,133 @@ classdef Metadata < handle
             end
             [table,~,~,labels]=crosstab(V1,V2);
         end
+        
+        
+        
+        
+        function CalculateDriftCorrection(MD, pos, varargin)
+            
+            %definitely works when # Zs is 1, untested otherwise
+            ZsToLoad = ParseInputs('ZsToLoad', 1, varargin);
+            %default channel is deepblue, but can specify otherwise
+            Channel = ParseInputs('Channel', 'DeepBlue', varargin);
+            
+            frames = unique(cell2mat(MD.getSpecificMetadata('frame')));
+            %load all data from frames 1:n-1
+            DataPre = stkread(MD,'Channel',Channel, 'flatfieldcorrection', false, 'frame', frames(1:end-1), 'Position', pos, 'Zindex', ZsToLoad);
+            %load all data from frames 2:n
+            DataPost = stkread(MD,'Channel',Channel, 'flatfieldcorrection', false, 'frame', frames(2:end), 'Position', pos, 'Zindex', ZsToLoad);
+            datasize = size(DataPre);
+            %this is in prep for # Zs>1
+            DataPre = reshape(DataPre,datasize(1),datasize(2), numel(ZsToLoad), numel(frames)-1);
+            DataPost = reshape(DataPost,datasize(1),datasize(2), numel(ZsToLoad), numel(frames)-1);
+            
+            %calculate xcorr across xy. This might be faster on the GP, but
+            %our GPU is always in full use. Anyway this takes ~1min
+            imXcorr = convnfft(bsxfun(@minus, DataPre ,mean(mean(DataPre))),bsxfun(@minus, rot90(DataPost,2) ,mean(mean(DataPost))) ,'shape','same', 'dims', 1:2);
+            %find where the xcorr is maximal
+            XX = find(bsxfun(@eq, imXcorr ,max(max(imXcorr))));
+            [maxCorrX,maxCorrY,f] = ind2sub(size(imXcorr),XX);
+            
+            driftXY.dX = [0; maxCorrX-size(imXcorr,1)/2]';
+            driftXY.dY = [0; maxCorrY-size(imXcorr,2)/2]';
+            
+            CummulDriftXY.dX = cumsum(driftXY.dX);
+            CummulDriftXY.dY = cumsum(driftXY.dY);
+            
+            %% Add drift to MD
+            Typ = MD.Types;
+            Vals = MD.Values;
+            
+            if ~any(strcmp('driftTform',Typ))
+                Typ{end+1}='driftTform'; %Will become a standard in MD.
+            end
+            Ntypes = size(Typ,2);
+            % put the right drift displacements in the right place
+            for i=1:numel(frames)
+                i
+                inds = MD.getIndex({'frame', 'Position'},{i, pos});
+                for j1=1:numel(inds)
+                    Vals{inds(j1),Ntypes} = [1 0 0 , 0 1 0 , CummulDriftXY.dY(i), CummulDriftXY.dX(i), 1];
+                end
+            end
+            MD.Types = Typ;
+            MD.Values = Vals;
+            
+            % you should save this after the calculation. It will save into
+            % the .mat file. to load it you should: MD=Metadata(fpath,[],1);
+        end
+        
+        
+        function CalculateDriftCorrection3D(MD, pos, varargin)
+            
+            %default channel is deepblue, but can specify otherwise
+            Channel = ParseInputs('Channel', 'Red', varargin);
+            resize = ParseInputs('resize', 0.25, varargin);
+            
+            allToOne = ParseInputs('allToOne', false, varargin);
+            
+            frames = unique(cell2mat(MD.getSpecificMetadata('frame')));
+            
+            driftXY.dX = 0;
+            driftXY.dY = 0;
+            driftXY.dZ = 0;
+            
+            DataPre = stkread(MD,'Channel',Channel, 'flatfieldcorrection', false, 'frame', frames(1), 'Position', pos,'resize3D',resize);
+            [DataPre,~] = perdecomp3D(DataPre);
+            for i=1:numel(frames)-1
+                %load all data from frames 2:n
+                DataPost = stkread(MD,'Channel',Channel, 'flatfieldcorrection', false, 'frame', frames(i+1), 'Position', pos,'resize3D',resize);
+                [DataPost,~] = perdecomp3D(DataPost);
+
+                datasize = size(DataPre);
+                
+                imXcorr = convnfft(bsxfun(@minus, DataPre ,mean(mean(DataPre))),bsxfun(@minus, flip(flip(flip(DataPost,1),2),3) ,mean(mean(DataPost))) ,'shape','same', 'dims', 1:3,'UseGPU', true);
+                XX = find(bsxfun(@eq, imXcorr ,max(imXcorr(:))));
+                [maxCorrX,maxCorrY,maxCorrZ] = ind2sub(size(imXcorr),XX);
+                
+                driftXY.dX = [driftXY.dX,  (maxCorrX-size(imXcorr,1)/2)/resize];
+                driftXY.dY = [driftXY.dY, (maxCorrY-size(imXcorr,2)/2)/resize];
+                driftXY.dZ = [driftXY.dZ, (maxCorrZ-size(imXcorr,3)/2)/resize]
+                
+                if ~allToOne
+                    DataPre = DataPost;
+                end
+            end
+            
+            if allToOne
+                CummulDriftXY.dX = driftXY.dX;
+                CummulDriftXY.dY = driftXY.dY;
+                CummulDriftXY.dZ = driftXY.dZ;
+            else
+                CummulDriftXY.dX = cumsum(driftXY.dX);
+                CummulDriftXY.dY = cumsum(driftXY.dY);
+                CummulDriftXY.dZ = cumsum(driftXY.dZ);                
+            end
+            
+            %% Add drift to MD
+            Typ = MD.Types;
+            Vals = MD.Values;
+            
+            if ~any(strcmp('driftTform',Typ))
+                Typ{end+1}='driftTform'; %Will become a standard in MD.
+            end
+            Ntypes = size(Typ,2);
+            % put the right drift displacements in the right place
+            for i=1:numel(frames)
+                i
+                inds = MD.getIndex({'frame', 'Position'},{i, pos});
+                for j1=1:numel(inds)
+                    Vals{inds(j1),Ntypes} = [1 0 0 0 , 0 1 0 0, 0 0 1 0, CummulDriftXY.dZ(i), CummulDriftXY.dY(i), CummulDriftXY.dX(i), 1];
+                end
+            end
+            MD.Types = Typ;
+            MD.Values = Vals;
+            MD.saveMetadataMat;
+        end
+        
+        
+        
         
         
         function makeTileConfig(MD)
