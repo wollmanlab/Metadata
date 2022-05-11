@@ -81,7 +81,7 @@ classdef Metadata < handle
             %  pth=regexprep(pth,'data3','bigstore');
             
             % if a Metadata.mat file exist just load it
-            if exist(fullfile(pth,'Metadata.mat'),'file')
+            if exist(fullfile(pth,'Metadata.mat'),'file') || exist(fullfile(pth,'Metadata.txt'),'file')
                 if exist(fullfile(pth,'Metadata.txt'),'file') && nargin<3
                     s.MD=MD.readDSV(pth);
                 else
@@ -127,7 +127,12 @@ classdef Metadata < handle
         
         function new_md = readDSV(~, pth)
             delimiter = '\t';
-            s = load(fullfile(pth, 'Metadata.mat'));
+            try
+                s = load(fullfile(pth, 'Metadata.mat'));
+            catch
+                s.MD = Metadata();
+            end
+            
             M = readtable(fullfile(pth, 'Metadata.txt'),'delimiter',delimiter);
             
             if any(strcmp('XY',M.Properties.VariableNames))
